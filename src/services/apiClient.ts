@@ -130,7 +130,6 @@ apiClient.interceptors.request.use(
       config.headers.Authorization = `Bearer ${token}`;
     }
 
-    // Allow browser to set boundary automatically for multipart/form-data payloads
     if (config.data instanceof FormData) {
       delete config.headers['Content-Type'];
     } else if (!config.headers['Content-Type']) {
@@ -141,6 +140,30 @@ apiClient.interceptors.request.use(
   },
   (error) => Promise.reject(normalizeApiError(error)),
 );
+
+// Auto-Retry Interceptor: handle Vercel serverless cold start or transient network hiccups on GET requests
+apiClient.interceptors.response.use(undefined, async (error: AxiosError) => {
+  const config = error.config as
+    | (InternalAxiosRequestConfig & { _retryCount?: number })
+    | undefined;
+  const status = error.response?.status;
+  const isRetryable =
+    config &&
+    config.method?.toLowerCase() === 'get' &&
+    (!status || [404, 502, 503, 504].includes(status));
+
+  if (isRetryable) {
+    config._retryCount = (config._retryCount ?? 0) + 1;
+    if (config._retryCount <= 2) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, 1200 * config._retryCount!),
+      );
+      return apiClient.request(config);
+    }
+  }
+
+  return Promise.reject(error);
+});
 
 // Response Interceptor: handle 401 Unauthorized and 403 Forbidden globally
 apiClient.interceptors.response.use(
