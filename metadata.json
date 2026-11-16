@@ -1,0 +1,6 @@
+{
+  "name": "tmv-admin-fe",
+  "description": "Admin panel dashboard for managing Themavia Market digital products, uploads, and orders.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
