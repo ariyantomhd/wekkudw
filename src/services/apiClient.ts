@@ -62,11 +62,27 @@ export function isPreviewSessionActive(): boolean {
   return sessionStorage.getItem(PREVIEW_SESSION_KEY) === '1';
 }
 
+// Single-flight promise registry (resets automatically on completion or failure)
+const inflightRequests = new Map<string, Promise<unknown>>();
+
+export function singleFlight<T>(key: string, fetcher: () => Promise<T>): Promise<T> {
+  const existing = inflightRequests.get(key) as Promise<T> | undefined;
+  if (existing) return existing;
+
+  const promise = fetcher().finally(() => {
+    inflightRequests.delete(key);
+  });
+
+  inflightRequests.set(key, promise);
+  return promise;
+}
+
 export function clearAdminSession(): void {
   if (typeof window === 'undefined') return;
   localStorage.removeItem(TOKEN_STORAGE_KEY);
   localStorage.removeItem(USER_STORAGE_KEY);
   sessionStorage.removeItem(PREVIEW_SESSION_KEY);
+  inflightRequests.clear();
 }
 
 export function extractApiErrorMessage(err: unknown): string {
@@ -122,13 +138,16 @@ const apiClient: AxiosInstance = axios.create({
   },
 });
 
-// Request Interceptor: inject Bearer token from localStorage.getItem('admin_token')
+// Request Interceptor: inject Bearer token & anti-cache headers
 apiClient.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
-    const token = localStorage.getItem(TOKEN_STORAGE_KEY);
+    const token = getAdminToken();
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
+
+    config.headers['Cache-Control'] = 'no-cache';
+    config.headers['Pragma'] = 'no-cache';
 
     if (config.data instanceof FormData) {
       delete config.headers['Content-Type'];
@@ -150,7 +169,9 @@ apiClient.interceptors.response.use(undefined, async (error: AxiosError) => {
   const isRetryable =
     config &&
     config.method?.toLowerCase() === 'get' &&
-    (!status || [404, 502, 503, 504].includes(status));
+    (!status ||
+      error.code === 'ECONNABORTED' ||
+      [404, 500, 502, 503, 504].includes(status));
 
   if (isRetryable) {
     config._retryCount = (config._retryCount ?? 0) + 1;
